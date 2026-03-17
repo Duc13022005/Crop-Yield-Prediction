@@ -40,7 +40,7 @@ with open("../configs/params.yaml", "r") as f:
 # Thuật toán Apriori/FP-Growth yêu cầu chuyển đổi Dataframe về dạng One-hot encoded transaction matrix. Ở đây sẽ dùng mlxtend.
 
 # %%
-df_rules = pd.read_csv(os.path.join(config['data']['processed_path'], "discretized_data.csv"))
+df_rules = pd.read_csv(os.path.join("../" + config['data']['processed_path'], "discretized_data.csv"))
 
 # Ta phân tích 4 yếu tố chính: Lượng Mưa, Nhiệt độ, Thuốc Trừ Sâu -> Năng suất
 cols_to_use = ['Rainfall_Bin', 'Temp_Bin', 'Pest_Bin', 'Yield_Bin']
@@ -105,7 +105,7 @@ for i, row in low_yield_rules.head(3).iterrows():
 
 # %%
 # Load Scale dữ liệu
-df_scaled = pd.read_csv(os.path.join(config['data']['processed_path'], "scaled_data.csv"))
+df_scaled = pd.read_csv(os.path.join("../" + config['data']['processed_path'], "scaled_data.csv"))
 # Raw df để profiling dễ hiểu hơn
 df_raw = pd.read_csv("../" + config['data']['raw_path'])
 df_raw.rename(columns={

@@ -1,0 +1,6 @@
+Method,Model,MAE
+Random Split,Ridge,29909.08203125
+Random Split,XGBoost,10469.8291015625
+Time Split,Ridge,87747.8515625
+Time Split,XGBoost,34853.91015625
+Time Split (LSTM),LSTM,85638.875

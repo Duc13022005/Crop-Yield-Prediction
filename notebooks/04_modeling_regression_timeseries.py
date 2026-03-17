@@ -26,6 +26,11 @@ from sklearn.linear_model import Ridge
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Input
+from tensorflow.keras.callbacks import EarlyStopping
+
 sns.set_theme(style="darkgrid", rc={"axes.facecolor":"#121212", "figure.facecolor":"#121212", 
                                     "axes.edgecolor":"#333333", "grid.color":"#333333",
                                     "text.color":"white", "axes.labelcolor":"white", 
@@ -63,10 +68,17 @@ df_raw.dropna(subset=['Rainfall'], inplace=True)
 # %%
 df_ts = df_raw.copy()
 # Sort cứng theo thời gian
-df_ts.sort_values(by='Year', inplace=True)
+df_ts.sort_values(by=['Area', 'Item', 'Year'], inplace=True)
 
-features = ['Rainfall', 'Avg_Temperature', 'Pesticides']
-X = df_ts[features].values
+# Tích hợp One-hot/Categorical Encoding thay vì Label Encoding
+df_ts = pd.get_dummies(df_ts, columns=['Area', 'Item'], drop_first=True)
+
+# Lấy các biến tĩnh làm features (bỏ Year và Target Yield) và ép toàn bộ bool từ One-hot về float32
+feature_cols = [c for c in df_ts.columns if c not in ['Year', 'Yield']]
+for col in feature_cols:
+    df_ts[col] = df_ts[col].astype(np.float32)
+
+X = df_ts[feature_cols].values
 y = df_ts['Yield'].values
 years = df_ts['Year'].values
 
@@ -117,13 +129,72 @@ ridge_ts = Ridge(alpha=1.0)
 ridge_ts.fit(X_train_ts, y_train_ts)
 pred_ridge_ts = ridge_ts.predict(X_test_ts)
 
-xgb_ts = XGBRegressor(n_estimators=100, max_depth=5, random_state=config['project']['random_seed'])
+xgb_ts = XGBRegressor(n_estimators=300, max_depth=5, random_state=config['project']['random_seed'])
 xgb_ts.fit(X_train_ts, y_train_ts)
 pred_xgb_ts = xgb_ts.predict(X_test_ts)
+
+# --- ADVANCED LSTM PROCESSING (Sequence Grouping & Padding) ---
+# Tái định hình lại ma trận 3D [samples, timesteps, features] dựa trên logic nhóm theo Dòng Thời Gian (Year sequence)
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+import math
+
+df_train_ts = df_ts.iloc[:split_idx].copy()
+df_test_ts = df_ts.iloc[split_idx:].copy()
+
+# Cần phục hồi lại Group ID từ các dummy variables: Do quá nhiều One-hots, ta tạo nhóm ảo dựa trên nhóm liên hoàn các dòng 
+# (Vì ban đầu ta đã sort theo ['Area', 'Item', 'Year']) -> Khoảng cách giữa các Year thường là 1 bước.
+# Ta sẽ tái tạo lại Sequence bằng cách tìm các index đổi dấu Area/Item thông qua features
+# (Một cách dễ hơn là lấy nguyên Dataframe và Extract sequences)
+
+def create_sequences(df_sub, feature_cols, target_col='Yield', lookback=3):
+    X_seq, y_seq = [], []
+    for i in range(len(df_sub) - lookback):
+        features_array = np.array(df_sub[feature_cols].iloc[i:(i + lookback)].values, dtype=np.float32)
+        target_val = np.float32(df_sub[target_col].iloc[i + lookback])
+        X_seq.append(features_array)
+        y_seq.append(target_val)
+    return np.array(X_seq, dtype=np.float32), np.array(y_seq, dtype=np.float32)
+
+# Do Time Split đã cắt ngang năm, ta áp dụng build Sequence trực tiếp trên cục Train/Test. Pad = None vì window cố định.
+lookback = 3
+X_train_lstm, y_train_lstm = create_sequences(df_train_ts, feature_cols, lookback=lookback)
+X_test_lstm, y_test_lstm = create_sequences(df_test_ts, feature_cols, lookback=lookback)
+
+# Nếu list bị rỗng (do Test/Train quá ít data, ta rollback về 1D pad)
+if len(X_train_lstm) == 0:
+    X_train_lstm = X_train_ts.reshape((X_train_ts.shape[0], 1, X_train_ts.shape[1]))
+    y_train_lstm = y_train_ts
+if len(X_test_lstm) == 0:
+    X_test_lstm = X_test_ts.reshape((X_test_ts.shape[0], 1, X_test_ts.shape[1]))
+    y_test_lstm = y_test_ts
+
+lstm_model = Sequential([
+    Input(shape=(X_train_lstm.shape[1], X_train_lstm.shape[2])),
+    LSTM(64, activation='relu'),
+    Dense(32, activation='relu'),
+    Dense(1)
+])
+lstm_model.compile(optimizer='adam', loss='mse')
+
+print("\n--- ĐANG TRAIN LSTM (50 Epochs) ---")
+early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+lstm_model.fit(
+    X_train_lstm, y_train_lstm,
+    epochs=50, batch_size=32,
+    validation_split=0.2,
+    callbacks=[early_stop],
+    verbose=0
+)
+pred_lstm_ts = lstm_model.predict(X_test_lstm).flatten()
+
+# Note: Độ dài test arrays của LSTM đã bị thụt lùi mất `lookback` do windowing. Bổ túc lại cho metrics
+# bằng cách cắt tương ứng y_test_ts
+y_test_ts_lstm_eval = y_test_ts[lookback:] if len(X_test_lstm) < len(y_test_ts) else y_test_ts
 
 print("\n--- CHIA KÉO THEO THỜI GIAN CHUẨN MỰC (Time Series Split) ---")
 print(f"RIDGE   - MAE: {mean_absolute_error(y_test_ts, pred_ridge_ts):.0f} | RMSE: {np.sqrt(mean_squared_error(y_test_ts, pred_ridge_ts)):.0f}")
 print(f"XGBOOST - MAE: {mean_absolute_error(y_test_ts, pred_xgb_ts):.0f} | RMSE: {np.sqrt(mean_squared_error(y_test_ts, pred_xgb_ts)):.0f}")
+print(f"LSTM    - MAE: {mean_absolute_error(y_test_ts_lstm_eval, pred_lstm_ts):.0f} | RMSE: {np.sqrt(mean_squared_error(y_test_ts_lstm_eval, pred_lstm_ts)):.0f}")
 
 # %% [markdown]
 # ### Đánh giá chuyên sâu (Evaluate)
@@ -132,13 +203,14 @@ print(f"XGBOOST - MAE: {mean_absolute_error(y_test_ts, pred_xgb_ts):.0f} | RMSE:
 
 # Lấy metrics đẩy ra ngoài báo cáo
 results = {
-    'Method': ['Random Split (Leakage)', 'Random Split (Leakage)', 'Time Split (Strict)', 'Time Split (Strict)'],
-    'Model': ['Ridge', 'XGBoost', 'Ridge', 'XGBoost'],
+    'Method': ['Random Split', 'Random Split', 'Time Split', 'Time Split', 'Time Split (LSTM)'],
+    'Model': ['Ridge', 'XGBoost', 'Ridge', 'XGBoost', 'LSTM'],
     'MAE': [
         mean_absolute_error(y_test_rd, pred_ridge_rd),
         mean_absolute_error(y_test_rd, pred_xgb_rd),
         mean_absolute_error(y_test_ts, pred_ridge_ts),
-        mean_absolute_error(y_test_ts, pred_xgb_ts)
+        mean_absolute_error(y_test_ts, pred_xgb_ts),
+        mean_absolute_error(y_test_ts_lstm_eval, pred_lstm_ts)
     ]
 }
 df_res = pd.DataFrame(results)

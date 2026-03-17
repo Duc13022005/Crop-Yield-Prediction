@@ -24,6 +24,8 @@ warnings.filterwarnings('ignore')
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, f1_score, confusion_matrix, ConfusionMatrixDisplay
 
 sns.set_theme(style="darkgrid", rc={"axes.facecolor":"#121212", "figure.facecolor":"#121212", 
@@ -36,7 +38,7 @@ with open("../configs/params.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # Load data đã chuẩn hoá cho Mô hình
-df_model = pd.read_csv(os.path.join(config['data']['processed_path'], "scaled_data.csv"))
+df_model = pd.read_csv(os.path.join("../" + config['data']['processed_path'], "scaled_data.csv"))
 
 # %% [markdown]
 # ## 1. Rời rạc hoá biến Mục tiêu (Target Discretization)
@@ -44,7 +46,15 @@ df_model = pd.read_csv(os.path.join(config['data']['processed_path'], "scaled_da
 # Lưu ý: Các Features input (Nhiệt độ, Mưa, Thuốc, Area) đã được Scaling Z-score từ NB01. Ta tập trung vào 3 features số đầu vào: Rainfall, Pesticides, Avg_Temperature vì Area đang bị mã hóa ở One-hot quá lãng phí. Để có base tốt, ta sẽ chỉ dùng yếu tố khí hậu + hóa chất tĩnh.
 
 # %%
-features = ['Rainfall', 'Avg_Temperature', 'Pesticides']
+# Tạo thêm Đặc trưng mới (Feature Extraction) dựa trên Insight khai phá
+df_model['Climate_Stress'] = df_model['Avg_Temperature'] - df_model['Rainfall']
+df_model['Tropical_Index'] = df_model['Avg_Temperature'] * df_model['Rainfall']
+
+from sklearn.preprocessing import LabelEncoder
+df_model['Area_Encoded'] = LabelEncoder().fit_transform(df_model['Area'])
+df_model['Item_Encoded'] = LabelEncoder().fit_transform(df_model['Item'])
+
+features = ['Rainfall', 'Avg_Temperature', 'Pesticides', 'Climate_Stress', 'Tropical_Index', 'Area_Encoded', 'Item_Encoded']
 X = df_model[features]
 
 # Định nghĩa target (Yield -> Low, Medium, High) 
@@ -68,7 +78,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 # %%
 # 1. BASELINE: Logistic Regression
-baseline_model = LogisticRegression(random_state=config['project']['random_seed'], multi_class='multinomial')
+baseline_model = LogisticRegression(random_state=config['project']['random_seed'])
 baseline_model.fit(X_train, y_train)
 y_pred_base = baseline_model.predict(X_test)
 base_f1_macro = f1_score(y_test, y_pred_base, average='macro')
@@ -79,9 +89,21 @@ rf_model.fit(X_train, y_train)
 y_pred_rf = rf_model.predict(X_test)
 rf_f1_macro = f1_score(y_test, y_pred_rf, average='macro')
 
+# 3. ADVANCED MODEL: XGBoost (Phase 2 Enhancement)
+le = LabelEncoder()
+y_train_enc = le.fit_transform(y_train)
+y_test_enc = le.transform(y_test)
+
+xgb_model = XGBClassifier(n_estimators=300, random_state=config['project']['random_seed'], max_depth=6)
+xgb_model.fit(X_train, y_train_enc)
+y_pred_xgb_enc = xgb_model.predict(X_test)
+y_pred_xgb = le.inverse_transform(y_pred_xgb_enc)
+xgb_f1_macro = f1_score(y_test, y_pred_xgb, average='macro')
+
 print("=== SO SÁNH F1-MACRO ===")
 print(f"Baseline (Logistic Regression): {base_f1_macro:.4f}")
 print(f"Strong (Random Forest)        : {rf_f1_macro:.4f}")
+print(f"Advanced (XGBoost 300 estimators): {xgb_f1_macro:.4f}")
 
 # %% [markdown]
 # **Đánh giá Hiệu năng Cơ bản:** RF Model nhỉnh hơn Baseline nhưng vì ta chỉ cung cấp 3 biến đầu vào thời tiết không kết hợp Không-thời-gian, F1 là cực điểm. Quan trọng hơn, ta cần xem sự đánh đổi bên trong "Low Yield" class.
@@ -91,16 +113,16 @@ print(f"Strong (Random Forest)        : {rf_f1_macro:.4f}")
 # Xem xét thật kĩ Report của RF Model, tập trung vào dòng `Low`.
 
 # %%
-print("\n=== CLASSIFICATION REPORT (RANDOM FOREST) ===")
-print(classification_report(y_test, y_pred_rf))
+print("\n=== CLASSIFICATION REPORT (XGBOOST) ===")
+print(classification_report(y_test, y_pred_xgb))
 
 # Vẽ Confusion Matrix đẹp
 fig, ax = plt.subplots(figsize=(8, 6))
-cm = confusion_matrix(y_test, y_pred_rf, labels=['Low', 'Medium', 'High'])
+cm = confusion_matrix(y_test, y_pred_xgb, labels=['Low', 'Medium', 'High'])
 disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Low', 'Medium', 'High'])
 disp.plot(cmap='Blues', ax=ax, values_format='d')
-plt.title("Confusion Matrix (RF)", fontsize=14, fontweight='bold')
-plt.savefig("../outputs/figures/classification_rf_cm.png", dpi=300, bbox_inches='tight')
+plt.title("Confusion Matrix (XGBoost Phase 2)", fontsize=14, fontweight='bold')
+plt.savefig("../outputs/figures/classification_xgb_cm.png", dpi=300, bbox_inches='tight')
 plt.show()
 
 # %% [markdown]

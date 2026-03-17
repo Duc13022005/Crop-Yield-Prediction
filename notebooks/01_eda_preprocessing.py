@@ -36,7 +36,7 @@ with open("../configs/params.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 # Đảm bảo thư mục lưu trữ tồn tại
-os.makedirs(config['data']['processed_path'], exist_ok=True)
+os.makedirs("../" + config['data']['processed_path'], exist_ok=True)
 os.makedirs("../outputs/figures", exist_ok=True)
 
 df = pd.read_csv("../" + config['data']['raw_path'])
@@ -147,7 +147,7 @@ scaler = StandardScaler()
 df_scaled[num_cols] = scaler.fit_transform(df_scaled[num_cols])
 
 # Lưu dữ liệu phục vụ Models
-df_scaled.to_csv(os.path.join(config['data']['processed_path'], "scaled_data.csv"), index=False)
+df_scaled.to_csv(os.path.join("../" + config['data']['processed_path'], "scaled_data.csv"), index=False)
 print("Saved scaled_data.csv for Modeling/Clustering.")
 
 # %%
@@ -170,7 +170,7 @@ df_rules['Yield_Bin'] = pd.qcut(df_rules['Yield'], q=3, labels=['Yield_Low', 'Yi
 cols_to_keep = ['Area', 'Item', 'Rainfall_Bin', 'Temp_Bin', 'Pest_Bin', 'Yield_Bin']
 df_rules = df_rules[cols_to_keep]
 
-df_rules.to_csv(os.path.join(config['data']['processed_path'], "discretized_data.csv"), index=False)
+df_rules.to_csv(os.path.join("../" + config['data']['processed_path'], "discretized_data.csv"), index=False)
 print("Saved discretized_data.csv for Association Rules.")
 
 display(df_rules.head())
