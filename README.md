@@ -1,7 +1,7 @@
-# VIBE CODING PROJECT DATA MINING: CROP YIELD PREDICTION 🌾
+# PROJECT DATA MINING: CROP YIELD PREDICTION 🌾
 
 > **Dự án cuối kỳ Môn Khai phá Dữ liệu (Data Mining)**  
-> **Sinh viên thực hiện:** Lê Thị Thùy Trang
+> 
 
 ---
 
@@ -95,4 +95,4 @@ Sau khi `run_papermill.py` báo cáo chạy vòng tròn xanh thành công:
 
 ---
 
-> **Bản quyền Code Framework:** Xây dựng bởi Lê Thị Thùy Trang - DNU 2026.
+> **Bản quyền Code Framework:** Xây dựng bởi Nhóm Đức - DNU 2026.
